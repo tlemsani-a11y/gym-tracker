@@ -89,12 +89,14 @@ export function DeleteButton({
   className = "btn btn-sm btn-danger",
   children = "Delete",
   onDeleted,
+  redirectTo,
 }: {
   confirmMessage: string;
   action: () => Promise<void>;
   className?: string;
   children?: React.ReactNode;
   onDeleted?: () => void;
+  redirectTo?: string;
 }) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -108,7 +110,11 @@ export function DeleteButton({
         startTransition(async () => {
           await action();
           onDeleted?.();
-          router.refresh();
+          if (redirectTo) {
+            router.push(redirectTo);
+          } else {
+            router.refresh();
+          }
         });
       }}
     >

@@ -17,7 +17,14 @@ export async function createProgramAction(formData: FormData) {
   const name = String(formData.get("name") || "").trim();
   if (!name) return;
   const profile = await getActiveProfile();
-  await q.createProgram(profile.id, name);
+  const programId = await q.createProgram(profile.id, name);
+  const days = formData.getAll("days").map(Number).filter((n) => !isNaN(n));
+  if (days.length) await q.setProgramDays(programId, days);
+  revalidateAll();
+}
+
+export async function updateProgramDaysAction(programId: string, days: number[]) {
+  await q.setProgramDays(programId, days);
   revalidateAll();
 }
 
@@ -30,7 +37,6 @@ export async function renameProgramAction(programId: string, name: string) {
 export async function deleteProgramAction(programId: string) {
   await q.deleteProgram(programId);
   revalidateAll();
-  redirect("/programs");
 }
 
 export async function addExerciseAction(programId: string, formData: FormData) {
@@ -104,6 +110,17 @@ export async function setDefaultRestSecondsAction(seconds: number) {
   revalidateAll();
 }
 
+export async function deleteSessionAction(sessionId: string) {
+  const removed = await q.deleteSession(sessionId);
+  revalidateAll();
+  return removed;
+}
+
+export async function restoreSessionAction(session: q.SessionRow, sets: q.SetRow[]) {
+  await q.restoreSession(session, sets);
+  revalidateAll();
+}
+
 // ---------- Bodyweight ----------
 
 export async function logBodyweightAction(weightKg: number) {
@@ -148,7 +165,26 @@ export async function renameProfileAction(profileId: string, name: string) {
 export async function deleteProfileAction(profileId: string) {
   const profiles = await listProfiles();
   if (profiles.length <= 1) return;
-  await dbRun("DELETE FROM profiles WHERE id = ?", [profileId]);
+
+  await dbBatch([
+    {
+      sql: `DELETE FROM sets WHERE session_id IN (SELECT id FROM sessions WHERE profile_id = ?)`,
+      args: [profileId],
+    },
+    { sql: "DELETE FROM sessions WHERE profile_id = ?", args: [profileId] },
+    {
+      sql: `DELETE FROM exercises WHERE program_id IN (SELECT id FROM programs WHERE profile_id = ?)`,
+      args: [profileId],
+    },
+    {
+      sql: `DELETE FROM program_days WHERE program_id IN (SELECT id FROM programs WHERE profile_id = ?)`,
+      args: [profileId],
+    },
+    { sql: "DELETE FROM programs WHERE profile_id = ?", args: [profileId] },
+    { sql: "DELETE FROM bodyweight_logs WHERE profile_id = ?", args: [profileId] },
+    { sql: "DELETE FROM profiles WHERE id = ?", args: [profileId] },
+  ]);
+
   const active = await getActiveProfile();
   if (active.id === profileId) {
     const remaining = await listProfiles();

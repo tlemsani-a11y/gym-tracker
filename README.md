@@ -70,6 +70,18 @@ That's it — you get a free `*.vercel.app` URL, HTTPS, and automatic redeploys 
 
 Local dev is unaffected — leave `TURSO_DATABASE_URL`/`TURSO_AUTH_TOKEN` unset (don't add them to `.env.local`) and the app uses the embedded SQLite file at `data/gym.db`, same as before.
 
+## Package as an Android app (APK)
+
+The app is now a real installable PWA (manifest, icons, service worker), which means you can wrap it into an Android APK for free using **PWABuilder** — no Android Studio, no local build tools.
+
+1. Deploy the app first (see above) so you have a live `https://...vercel.app` URL — PWABuilder needs a real, publicly reachable HTTPS site to analyze.
+2. Go to [pwabuilder.com](https://www.pwabuilder.com), paste your Vercel URL, and click **Start**.
+3. It'll show a report card for manifest / service worker / icons — all three should already be green from what's set up here.
+4. Click **Package for stores** → **Android** → download the package. You'll get a signed, installable `.apk` (and an `.aab` if you ever want to publish it).
+5. Copy the `.apk` to your phone (email, cloud drive, USB) and open it. Android will ask you to allow installs from that source the first time — that's expected for a sideloaded app, not a sign anything's wrong.
+
+This gives you a real app icon and a standalone window (no browser address bar) on your phone, completely free. Publishing it on the **Google Play Store** is a separate, optional step that costs a one-time $25 registration fee — not required for just installing it on your own device.
+
 ## Getting started (local)
 
 ```bash

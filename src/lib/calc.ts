@@ -1,6 +1,16 @@
 // Pure, dependency-free calculation helpers ported 1:1 from the original
 // single-file app's logic, so the numbers behave identically.
 
+// 0=Monday .. 6=Sunday throughout the app, matching the Monday-start week
+// strip and calendar grid.
+export const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+export const DAY_LABELS_FULL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+export function dayIndex(date: Date = new Date()): number {
+  const jsDay = date.getDay(); // 0=Sun .. 6=Sat
+  return jsDay === 0 ? 6 : jsDay - 1;
+}
+
 export function estOneRM(weight: number, reps: number) {
   return weight * (1 + reps / 30); // Epley formula
 }

@@ -72,12 +72,21 @@ const SCHEMA_SQL = `
     weight_kg REAL NOT NULL
   );
 
+  -- day_of_week: 0=Monday .. 6=Sunday, matching the rest of the app's
+  -- Monday-start week convention (week strip, calendar grid).
+  CREATE TABLE IF NOT EXISTS program_days (
+    program_id TEXT NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
+    day_of_week INTEGER NOT NULL,
+    PRIMARY KEY (program_id, day_of_week)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_programs_profile ON programs(profile_id);
   CREATE INDEX IF NOT EXISTS idx_exercises_program ON exercises(program_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_profile ON sessions(profile_id);
   CREATE INDEX IF NOT EXISTS idx_sets_session ON sets(session_id);
   CREATE INDEX IF NOT EXISTS idx_sets_exercise ON sets(exercise_id);
   CREATE INDEX IF NOT EXISTS idx_bw_profile ON bodyweight_logs(profile_id);
+  CREATE INDEX IF NOT EXISTS idx_program_days_day ON program_days(day_of_week);
 `;
 
 /** Ensures the schema exists. Cheap to call repeatedly -- the actual

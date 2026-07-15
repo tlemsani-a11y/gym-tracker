@@ -5,6 +5,7 @@ import { getSession, getProgram, getExercises, getSetsForSession } from "@/lib/q
 import { plateColorClass, fmtDate } from "@/lib/calc";
 import { SessionExerciseCard } from "@/components/SessionExerciseCard";
 import { RestPresetButtons } from "@/components/RestPresetButtons";
+import { DeleteSessionButton } from "@/components/DeleteSessionButton";
 
 export default async function SessionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -41,7 +42,18 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
         <div className="empty-state">This program has no exercises yet.</div>
       )}
 
-      <Link href="/" className="btn">Finish &amp; Back to Dashboard</Link>
+      <div className="row">
+        <Link href="/" className="btn" style={{ flex: "1 1 auto" }}>Finish &amp; Back to Dashboard</Link>
+        <DeleteSessionButton
+          sessionId={id}
+          programName={session.program_name}
+          mode="redirect"
+          redirectTo="/history"
+          className="btn btn-danger"
+        >
+          Delete workout
+        </DeleteSessionButton>
+      </div>
     </>
   );
 }

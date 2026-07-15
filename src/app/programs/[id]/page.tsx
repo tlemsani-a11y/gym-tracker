@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getProgram, getExercises } from "@/lib/queries";
+import { getProgram, getExercises, getProgramDays } from "@/lib/queries";
 import {
   addExerciseAction,
   renameExerciseAction,
@@ -10,13 +10,14 @@ import {
   startWorkoutAction,
 } from "@/lib/actions";
 import { AddItemForm, RenameButton, DeleteButton, MoveButtons } from "@/components/CrudControls";
+import { ProgramDaysEditor } from "@/components/ProgramDaysEditor";
 
 export default async function ProgramDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const program = await getProgram(id);
   if (!program) notFound();
 
-  const exercises = await getExercises(id);
+  const [exercises, days] = await Promise.all([getExercises(id), getProgramDays(id)]);
 
   return (
     <>
@@ -28,6 +29,11 @@ export default async function ProgramDetailPage({ params }: { params: Promise<{ 
         <form action={startWorkoutAction.bind(null, id)}>
           <button className="btn btn-primary" style={{ flex: "0 0 auto" }} type="submit">Start Workout</button>
         </form>
+      </div>
+
+      <div className="card">
+        <span className="eyebrow" style={{ margin: 0 }}>Scheduled days</span>
+        <ProgramDaysEditor programId={id} initialDays={days} />
       </div>
 
       <div className="card">
@@ -67,6 +73,7 @@ export default async function ProgramDetailPage({ params }: { params: Promise<{ 
         confirmMessage={`Delete "${program.name}" and all its exercises? This cannot be undone.`}
         action={deleteProgramAction.bind(null, id)}
         className="btn btn-danger"
+        redirectTo="/programs"
       >
         Delete program
       </DeleteButton>

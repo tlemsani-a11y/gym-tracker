@@ -12,6 +12,45 @@ export function getPrograms(profileId: string): Promise<Program[]> {
   return dbAll<Program>("SELECT * FROM programs WHERE profile_id = ? ORDER BY sort_order ASC", [profileId]);
 }
 
+export async function getProgramDays(programId: string): Promise<number[]> {
+  const rows = await dbAll<{ day_of_week: number }>(
+    "SELECT day_of_week FROM program_days WHERE program_id = ? ORDER BY day_of_week ASC",
+    [programId]
+  );
+  return rows.map((r) => r.day_of_week);
+}
+
+export async function setProgramDays(programId: string, days: number[]): Promise<void> {
+  const unique = Array.from(new Set(days)).filter((d) => d >= 0 && d <= 6);
+  const statements: { sql: string; args: unknown[] }[] = [
+    { sql: "DELETE FROM program_days WHERE program_id = ?", args: [programId] },
+    ...unique.map((d) => ({
+      sql: "INSERT INTO program_days (program_id, day_of_week) VALUES (?, ?)",
+      args: [programId, d],
+    })),
+  ];
+  await dbBatch(statements);
+}
+
+export type ProgramWithDays = Program & { days: number[] };
+
+export async function getProgramsWithDays(profileId: string): Promise<ProgramWithDays[]> {
+  const programs = await getPrograms(profileId);
+  const dayRows = await dbAll<{ program_id: string; day_of_week: number }>(
+    `SELECT program_days.program_id, program_days.day_of_week FROM program_days
+     JOIN programs ON programs.id = program_days.program_id
+     WHERE programs.profile_id = ?`,
+    [profileId]
+  );
+  const byProgram = new Map<string, number[]>();
+  dayRows.forEach((r) => {
+    const list = byProgram.get(r.program_id) ?? [];
+    list.push(r.day_of_week);
+    byProgram.set(r.program_id, list);
+  });
+  return programs.map((p) => ({ ...p, days: (byProgram.get(p.id) ?? []).sort((a, b) => a - b) }));
+}
+
 export function getProgram(programId: string): Promise<Program | undefined> {
   return dbGet<Program>("SELECT * FROM programs WHERE id = ?", [programId]);
 }
@@ -40,8 +79,12 @@ export function renameProgram(programId: string, name: string) {
   return dbRun("UPDATE programs SET name = ? WHERE id = ?", [name, programId]);
 }
 
-export function deleteProgram(programId: string) {
-  return dbRun("DELETE FROM programs WHERE id = ?", [programId]);
+export async function deleteProgram(programId: string) {
+  await dbBatch([
+    { sql: "DELETE FROM exercises WHERE program_id = ?", args: [programId] },
+    { sql: "DELETE FROM program_days WHERE program_id = ?", args: [programId] },
+    { sql: "DELETE FROM programs WHERE id = ?", args: [programId] },
+  ]);
 }
 
 export async function addExercise(programId: string, name: string) {
@@ -128,6 +171,31 @@ export function updateSet(setId: string, weight: number, reps: number) {
 
 export function setDefaultRestSeconds(profileId: string, seconds: number) {
   return dbRun("UPDATE profiles SET default_rest_seconds = ? WHERE id = ?", [seconds, profileId]);
+}
+
+export async function deleteSession(sessionId: string): Promise<{ session: SessionRow; sets: SetRow[] } | undefined> {
+  const session = await getSession(sessionId);
+  if (!session) return undefined;
+  const sets = await getSetsForSession(sessionId);
+  await dbBatch([
+    { sql: "DELETE FROM sets WHERE session_id = ?", args: [sessionId] },
+    { sql: "DELETE FROM sessions WHERE id = ?", args: [sessionId] },
+  ]);
+  return { session, sets };
+}
+
+export async function restoreSession(session: SessionRow, sets: SetRow[]): Promise<void> {
+  const statements: { sql: string; args: unknown[] }[] = [
+    {
+      sql: "INSERT INTO sessions (id, profile_id, program_id, program_name, created_at) VALUES (?, ?, ?, ?, ?)",
+      args: [session.id, session.profile_id, session.program_id, session.program_name, session.created_at],
+    },
+    ...sets.map((s) => ({
+      sql: "INSERT INTO sets (id, session_id, exercise_id, weight, reps, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [s.id, s.session_id, s.exercise_id, s.weight, s.reps, s.created_at],
+    })),
+  ];
+  await dbBatch(statements);
 }
 
 // ---------- Stats / PRs ----------

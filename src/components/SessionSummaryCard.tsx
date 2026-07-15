@@ -3,7 +3,7 @@ import { getProgram, getExercises, getSetsForSession, type SessionRow } from "@/
 import { fmtDate } from "@/lib/calc";
 import { DeleteSessionButton } from "@/components/DeleteSessionButton";
 
-export async function SessionSummaryCard({ session }: { session: SessionRow }) {
+export async function SessionSummaryCard({ session, timeZone }: { session: SessionRow; timeZone: string }) {
   const program = session.program_id ? await getProgram(session.program_id) : undefined;
   const exercises = program ? await getExercises(program.id) : [];
   const sets = await getSetsForSession(session.id);
@@ -17,7 +17,7 @@ export async function SessionSummaryCard({ session }: { session: SessionRow }) {
       <div className="row" style={{ alignItems: "center" }}>
         <div>
           <h2 style={{ marginBottom: "0.15rem" }}>{session.program_name}</h2>
-          <p className="muted" style={{ margin: 0 }}>{fmtDate(session.created_at)}</p>
+          <p className="muted" style={{ margin: 0 }}>{fmtDate(session.created_at, timeZone)}</p>
         </div>
         <span style={{ display: "flex", gap: "0.4rem", flex: "0 0 auto" }}>
           <Link href={`/session/${session.id}`} className="btn btn-sm">Open</Link>

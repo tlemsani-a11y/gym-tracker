@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getActiveProfile } from "@/lib/profile-session";
+import { getTimeZone } from "@/lib/timezone-session";
 import { getProgramsWithDays, getExercises } from "@/lib/queries";
 import { plateColorClass, DAY_LABELS, dayIndex } from "@/lib/calc";
 import { deleteProgramAction } from "@/lib/actions";
@@ -8,9 +9,10 @@ import { NewProgramForm } from "@/components/NewProgramForm";
 
 export default async function ProgramsPage() {
   const profile = await getActiveProfile();
+  const timeZone = await getTimeZone();
   const programs = await getProgramsWithDays(profile.id);
   const exerciseCounts = await Promise.all(programs.map((p) => getExercises(p.id)));
-  const todayIdx = dayIndex();
+  const todayIdx = dayIndex(timeZone);
 
   return (
     <>

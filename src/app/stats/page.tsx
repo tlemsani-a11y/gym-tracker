@@ -1,4 +1,5 @@
 import { getActiveProfile } from "@/lib/profile-session";
+import { getTimeZone } from "@/lib/timezone-session";
 import { getPrograms, getExercises, getAllSetsForExercise, getTopSetPerSessionForExercise, getOverallStats, getBodyweightLogs, type Exercise } from "@/lib/queries";
 import { plateColorClass, estOneRM, fmtShortDate } from "@/lib/calc";
 import { BodyweightSection } from "@/components/BodyweightSection";
@@ -6,6 +7,7 @@ import { LineChart } from "@/components/LineChart";
 
 export default async function StatsPage() {
   const profile = await getActiveProfile();
+  const timeZone = await getTimeZone();
   const [overall, logs, programs] = await Promise.all([
     getOverallStats(profile.id),
     getBodyweightLogs(profile.id),
@@ -30,7 +32,7 @@ export default async function StatsPage() {
         if (est > bestEst) bestEst = est;
       }
       const rawPoints = await getTopSetPerSessionForExercise(profile.id, ex.id);
-      const points = rawPoints.map((p) => ({ label: fmtShortDate(p.iso), value: p.value }));
+      const points = rawPoints.map((p) => ({ label: fmtShortDate(p.iso, timeZone), value: p.value }));
       return { ex, sets, maxWeightSet, bestEst, points };
     })
   );
@@ -46,7 +48,7 @@ export default async function StatsPage() {
         <div className="stat-box"><span className="num">{overall.totalPrograms}</span><span className="label">Programs</span></div>
       </div>
 
-      <BodyweightSection logs={logs} />
+      <BodyweightSection logs={logs} timeZone={timeZone} />
 
       {exerciseStats.length ? (
         exerciseStats.map(({ ex, sets, maxWeightSet, bestEst, points }, i) => {

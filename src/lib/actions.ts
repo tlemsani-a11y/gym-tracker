@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { uid, dbRun, dbBatch } from "./db";
 import { getActiveProfile, setActiveProfileCookie, listProfiles } from "./profile-session";
+import { getTimeZone } from "./timezone-session";
 import * as q from "./queries";
 import { estOneRM } from "./calc";
 
@@ -125,7 +126,8 @@ export async function restoreSessionAction(session: q.SessionRow, sets: q.SetRow
 
 export async function logBodyweightAction(weightKg: number) {
   const profile = await getActiveProfile();
-  const result = await q.logBodyweight(profile.id, weightKg);
+  const timeZone = await getTimeZone();
+  const result = await q.logBodyweight(profile.id, weightKg, timeZone);
   revalidateAll();
   return result;
 }

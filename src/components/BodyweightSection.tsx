@@ -8,7 +8,7 @@ import { LineChart } from "@/components/LineChart";
 import { fmtShortDate } from "@/lib/calc";
 import type { BodyweightRow } from "@/lib/queries";
 
-export function BodyweightSection({ logs }: { logs: BodyweightRow[] }) {
+export function BodyweightSection({ logs, timeZone }: { logs: BodyweightRow[]; timeZone: string }) {
   const { showToast, showUndoToast } = useToast();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -18,7 +18,7 @@ export function BodyweightSection({ logs }: { logs: BodyweightRow[] }) {
   const latest = sortedDesc[0];
   const points = [...logs]
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-    .map((e) => ({ label: fmtShortDate(e.date), value: e.weight_kg }));
+    .map((e) => ({ label: fmtShortDate(e.date, timeZone), value: e.weight_kg }));
 
   let delta: number | null = null;
   if (latest && points.length >= 2) {
@@ -86,7 +86,7 @@ export function BodyweightSection({ logs }: { logs: BodyweightRow[] }) {
           {sortedDesc.slice(0, 5).map((e) => (
             <div key={e.id} className="set-row">
               <span>
-                {fmtShortDate(e.date)} → <strong>{e.weight_kg} kg</strong>
+                {fmtShortDate(e.date, timeZone)} → <strong>{e.weight_kg} kg</strong>
               </span>
               <button className="btn btn-sm btn-danger" onClick={() => removeEntry(e)} disabled={isPending}>✕</button>
             </div>

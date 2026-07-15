@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getActiveProfile } from "@/lib/profile-session";
+import { getTimeZone } from "@/lib/timezone-session";
 import { getSession, getProgram, getExercises, getSetsForSession } from "@/lib/queries";
 import { plateColorClass, fmtDate } from "@/lib/calc";
 import { SessionExerciseCard } from "@/components/SessionExerciseCard";
@@ -10,6 +11,7 @@ import { DeleteSessionButton } from "@/components/DeleteSessionButton";
 export default async function SessionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const profile = await getActiveProfile();
+  const timeZone = await getTimeZone();
   const session = await getSession(id);
   if (!session || session.profile_id !== profile.id) notFound();
 
@@ -20,7 +22,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
   return (
     <>
       <h1 style={{ marginBottom: 0 }}>{session.program_name}</h1>
-      <p className="muted">{fmtDate(session.created_at)}</p>
+      <p className="muted">{fmtDate(session.created_at, timeZone)}</p>
 
       <div className="card">
         <span className="muted">Rest timer after each set</span>

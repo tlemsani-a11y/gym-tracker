@@ -1,18 +1,18 @@
 import Link from "next/link";
 import { getActiveProfile } from "@/lib/profile-session";
-import { getSessions, getTrainedDateKeys, getSessionsForDateKey } from "@/lib/queries";
-import { dateKey } from "@/lib/calc";
+import { getTimeZone } from "@/lib/timezone-session";
+import { getSessions } from "@/lib/queries";
+import { calendarDate, addCalendarDays, calendarDateKey, zonedToday, zonedDateKey } from "@/lib/calc";
 import { SessionSummaryCard } from "@/components/SessionSummaryCard";
 
 function buildCalendarCells(year: number, month: number) {
-  const firstOfMonth = new Date(year, month, 1);
-  const startOffset = (firstOfMonth.getDay() + 6) % 7; // Monday-start offset
-  const gridStart = new Date(year, month, 1 - startOffset);
+  const firstOfMonth = calendarDate(year, month + 1, 1);
+  const startOffset = (firstOfMonth.getUTCDay() + 6) % 7; // Monday-start offset
+  const gridStart = addCalendarDays(firstOfMonth, -startOffset);
   const cells: { date: Date; inMonth: boolean }[] = [];
-  const cursor = new Date(gridStart);
   for (let i = 0; i < 42; i++) {
-    cells.push({ date: new Date(cursor), inMonth: cursor.getMonth() === month });
-    cursor.setDate(cursor.getDate() + 1);
+    const date = addCalendarDays(gridStart, i);
+    cells.push({ date, inMonth: date.getUTCMonth() === month });
   }
   return cells;
 }
@@ -24,20 +24,22 @@ export default async function HistoryPage({
 }) {
   const { view: viewParam, month: monthParam, day: dayParam } = await searchParams;
   const profile = await getActiveProfile();
+  const timeZone = await getTimeZone();
   const view = viewParam === "calendar" ? "calendar" : "list";
 
-  const today = new Date();
+  const today = zonedToday(timeZone);
   const [cursorYear, cursorMonth] = monthParam
     ? monthParam.split("-").map(Number)
-    : [today.getFullYear(), today.getMonth() + 1];
-  const cursorDate = new Date(cursorYear, cursorMonth - 1, 1);
+    : [today.getUTCFullYear(), today.getUTCMonth() + 1];
+  const cursorDate = calendarDate(cursorYear, cursorMonth, 1);
 
-  const selectedKey = dayParam ?? (view === "calendar" ? dateKey(today) : null);
-  const monthLabel = cursorDate.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const todayKey = calendarDateKey(today);
+  const selectedKey = dayParam ?? (view === "calendar" ? todayKey : null);
+  const monthLabel = cursorDate.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
   function monthHref(delta: number) {
-    const d = new Date(cursorYear, cursorMonth - 1 + delta, 1);
-    return `/history?view=calendar&month=${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const target = new Date(Date.UTC(cursorYear, cursorMonth - 1 + delta, 1));
+    return `/history?view=calendar&month=${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, "0")}`;
   }
 
   const toggleHtml = (
@@ -50,18 +52,18 @@ export default async function HistoryPage({
   );
 
   if (view === "calendar") {
-    const trainedKeys = await getTrainedDateKeys(profile.id);
-    const todayKey = dateKey(today);
+    const sessions = await getSessions(profile.id);
+    const trainedKeys = new Set(sessions.map((s) => zonedDateKey(new Date(s.created_at), timeZone)));
     const cells = buildCalendarCells(cursorYear, cursorMonth - 1);
-    const daySessions = selectedKey ? await getSessionsForDateKey(profile.id, selectedKey) : [];
+    const daySessions = selectedKey ? sessions.filter((s) => zonedDateKey(new Date(s.created_at), timeZone) === selectedKey) : [];
     const selectedDate = selectedKey
       ? (() => {
           const [y, m, d] = selectedKey.split("-").map(Number);
-          return new Date(y, m - 1, d);
+          return calendarDate(y, m, d);
         })()
       : null;
     const dayLabel = selectedDate
-      ? selectedDate.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })
+      ? selectedDate.toLocaleDateString("en-US", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })
       : "";
 
     return (
@@ -79,7 +81,7 @@ export default async function HistoryPage({
           </div>
           <div className="cal-grid">
             {cells.map(({ date, inMonth }) => {
-              const key = dateKey(date);
+              const key = calendarDateKey(date);
               const trained = trainedKeys.has(key);
               return (
                 <Link
@@ -87,7 +89,7 @@ export default async function HistoryPage({
                   href={`/history?view=calendar&month=${cursorYear}-${String(cursorMonth).padStart(2, "0")}&day=${key}`}
                   className={`cal-day ${inMonth ? "" : "cal-day-out"} ${key === todayKey ? "cal-day-today" : ""} ${key === selectedKey ? "cal-day-selected" : ""}`}
                 >
-                  <span className="cal-day-num">{date.getDate()}</span>
+                  <span className="cal-day-num">{date.getUTCDate()}</span>
                   {trained ? <span className="cal-day-dot"></span> : null}
                 </Link>
               );
@@ -96,7 +98,7 @@ export default async function HistoryPage({
         </div>
         {selectedKey ? <span className="eyebrow">{dayLabel}</span> : null}
         {daySessions.length ? (
-          daySessions.map((s) => <SessionSummaryCard key={s.id} session={s} />)
+          daySessions.map((s) => <SessionSummaryCard key={s.id} session={s} timeZone={timeZone} />)
         ) : (
           <div className="empty-state">{selectedKey ? "No workout logged this day." : "Tap a day to see what you did."}</div>
         )}
@@ -110,7 +112,7 @@ export default async function HistoryPage({
       <h1>History</h1>
       {toggleHtml}
       {sessions.length ? (
-        sessions.map((s) => <SessionSummaryCard key={s.id} session={s} />)
+        sessions.map((s) => <SessionSummaryCard key={s.id} session={s} timeZone={timeZone} />)
       ) : (
         <div className="empty-state">No workout sessions yet. Start one from the Dashboard.</div>
       )}

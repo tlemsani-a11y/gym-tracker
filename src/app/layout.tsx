@@ -8,6 +8,7 @@ import { Header } from "@/components/Header";
 import { TabBar } from "@/components/TabBar";
 import { Sidebar } from "@/components/Sidebar";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { TimezoneSync } from "@/components/TimezoneSync";
 
 const jetbrainsMono = localFont({
   src: [
@@ -51,6 +52,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en">
       <body className={jetbrainsMono.variable}>
         <ServiceWorkerRegister />
+        <TimezoneSync />
         <AppProviders>
           <div className="app-shell">
             <Sidebar profileName={profile.name} />

@@ -1,4 +1,5 @@
 import { uid, dbAll, dbGet, dbRun, dbBatch } from "./db";
+import { zonedDateKey } from "./calc";
 
 export type Exercise = { id: string; program_id: string; name: string; sort_order: number };
 export type Program = { id: string; profile_id: string; name: string; sort_order: number };
@@ -269,13 +270,11 @@ export function getBodyweightLogs(profileId: string): Promise<BodyweightRow[]> {
   return dbAll<BodyweightRow>("SELECT * FROM bodyweight_logs WHERE profile_id = ? ORDER BY date DESC", [profileId]);
 }
 
-export async function logBodyweight(profileId: string, weightKg: number) {
+export async function logBodyweight(profileId: string, weightKg: number, timeZone: string) {
   const today = new Date();
-  const todayKey = today.toISOString().slice(0, 10);
-  const existing = await dbGet<BodyweightRow>("SELECT * FROM bodyweight_logs WHERE profile_id = ? AND date LIKE ?", [
-    profileId,
-    `${todayKey}%`,
-  ]);
+  const todayKey = zonedDateKey(today, timeZone);
+  const existingLogs = await dbAll<BodyweightRow>("SELECT * FROM bodyweight_logs WHERE profile_id = ?", [profileId]);
+  const existing = existingLogs.find((row) => zonedDateKey(new Date(row.date), timeZone) === todayKey);
 
   if (existing) {
     await dbRun("UPDATE bodyweight_logs SET weight_kg = ? WHERE id = ?", [weightKg, existing.id]);
@@ -305,23 +304,6 @@ export function restoreBodyweightEntry(row: BodyweightRow) {
   ]);
 }
 
-// ---------- History / calendar ----------
-
-export async function getTrainedDateKeys(profileId: string): Promise<Set<string>> {
-  const rows = await dbAll<{ created_at: string }>("SELECT created_at FROM sessions WHERE profile_id = ?", [profileId]);
-  const set = new Set<string>();
-  rows.forEach((r) => {
-    const d = new Date(r.created_at);
-    set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
-  });
-  return set;
-}
-
-export async function getSessionsForDateKey(profileId: string, key: string): Promise<SessionRow[]> {
-  const sessions = await getSessions(profileId);
-  return sessions.filter((s) => {
-    const d = new Date(s.created_at);
-    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    return k === key;
-  });
-}
+// Note: history-by-date grouping now happens in the History page itself
+// using zonedDateKey() against already-fetched sessions, so it can honor
+// the visitor's timezone -- see src/app/history/page.tsx.

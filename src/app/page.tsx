@@ -1,7 +1,19 @@
 import Link from "next/link";
 import { getActiveProfile } from "@/lib/profile-session";
+import { getTimeZone } from "@/lib/timezone-session";
 import { getProgramsWithDays, getSessions, getExercises } from "@/lib/queries";
-import { plateColorClass, fmtDate, getStartOfWeek, isSameDay, dateKey, dayIndex, DAY_LABELS, DAY_LABELS_FULL } from "@/lib/calc";
+import {
+  plateColorClass,
+  fmtDate,
+  dayIndex,
+  startOfWeek,
+  zonedToday,
+  zonedDateKey,
+  addCalendarDays,
+  calendarDateKey,
+  DAY_LABELS,
+  DAY_LABELS_FULL,
+} from "@/lib/calc";
 import { startWorkoutAction, deleteProgramAction } from "@/lib/actions";
 import { DeleteButton } from "@/components/CrudControls";
 
@@ -12,27 +24,24 @@ export default async function DashboardPage({
 }) {
   const { day: dayParam } = await searchParams;
   const profile = await getActiveProfile();
+  const timeZone = await getTimeZone();
   const programs = await getProgramsWithDays(profile.id);
   const sessions = await getSessions(profile.id);
   const exerciseCounts = await Promise.all(programs.map((p) => getExercises(p.id)));
   const lastSession = sessions[0];
 
-  const todayIdx = dayIndex();
+  const todayIdx = dayIndex(timeZone);
   const todayPrograms = programs.filter((p) => p.days.includes(todayIdx));
 
-  const startOfWeek = getStartOfWeek(new Date());
-  const today = new Date();
+  const today = zonedToday(timeZone);
+  const todayKey = calendarDateKey(today);
+  const weekStart = startOfWeek(today);
+  const trainedKeys = new Set(sessions.map((s) => zonedDateKey(new Date(s.created_at), timeZone)));
   const weekLabels = ["M", "T", "W", "T", "F", "S", "S"];
   const days = Array.from({ length: 7 }, (_, i) => {
-    const day = new Date(startOfWeek);
-    day.setDate(day.getDate() + i);
-    const dayEnd = new Date(day);
-    dayEnd.setHours(23, 59, 59, 999);
-    const trained = sessions.some((s) => {
-      const sd = new Date(s.created_at);
-      return sd >= day && sd <= dayEnd;
-    });
-    return { date: day, trained, isToday: isSameDay(day, today), label: weekLabels[i] };
+    const date = addCalendarDays(weekStart, i);
+    const key = calendarDateKey(date);
+    return { date, key, trained: trainedKeys.has(key), isToday: key === todayKey, label: weekLabels[i] };
   });
   const trainedCount = days.filter((d) => d.trained).length;
 
@@ -85,10 +94,8 @@ export default async function DashboardPage({
         <div className="week-strip">
           {days.map((d) => (
             <Link
-              key={dateKey(d.date)}
-              href={`/history?view=calendar&day=${dateKey(d.date)}&month=${d.date.getFullYear()}-${String(
-                d.date.getMonth() + 1
-              ).padStart(2, "0")}`}
+              key={d.key}
+              href={`/history?view=calendar&day=${d.key}&month=${d.key.slice(0, 7)}`}
               className={`week-day ${d.trained ? "trained" : ""} ${d.isToday ? "today" : ""}`}
             >
               <span className="week-day-dot"></span>
@@ -102,7 +109,7 @@ export default async function DashboardPage({
         <div className="card">
           <p className="muted" style={{ margin: 0 }}>Last workout</p>
           <div style={{ fontWeight: 600 }}>{lastSession.program_name}</div>
-          <p className="muted" style={{ margin: "0 0 0.5rem" }}>{fmtDate(lastSession.created_at)}</p>
+          <p className="muted" style={{ margin: "0 0 0.5rem" }}>{fmtDate(lastSession.created_at, timeZone)}</p>
           <Link href={`/session/${lastSession.id}`} className="btn">View session</Link>
         </div>
       ) : null}

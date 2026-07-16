@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { uid, dbRun, dbBatch } from "./db";
+import { uid, dbRun, dbBatch, dbGet } from "./db";
 import { getActiveProfile, setActiveProfileCookie, listProfiles } from "./profile-session";
 import { getTimeZone } from "./timezone-session";
 import * as q from "./queries";
@@ -213,7 +213,7 @@ export async function importProfileAction(formData: FormData) {
     const text = await file.text();
     parsed = JSON.parse(text);
   } catch {
-    return { error: "Couldn't read that file" };
+    return { error: "Couldn't read that file — make sure it's an unmodified exported backup." };
   }
 
   const payload = parsed as {
@@ -226,13 +226,6 @@ export async function importProfileAction(formData: FormData) {
   if (!importedData || !Array.isArray(importedData.programs) || !Array.isArray(importedData.sessions)) {
     return { error: "Not a recognized backup file" };
   }
-
-  const newProfileId = uid();
-  await dbRun("INSERT INTO profiles (id, name, created_at, default_rest_seconds) VALUES (?, ?, ?, 90)", [
-    newProfileId,
-    name,
-    new Date().toISOString(),
-  ]);
 
   type LegacyExercise = { id?: string; name: string };
   type LegacyProgram = { id?: string; name: string; exercises: LegacyExercise[] };
@@ -247,45 +240,98 @@ export async function importProfileAction(formData: FormData) {
 
   const programs = importedData.programs as LegacyProgram[];
   const sessions = importedData.sessions as LegacySession[];
-  const exerciseIdMap = new Map<string, string>();
-  const statements: { sql: string; args: unknown[] }[] = [];
+  const expectedSetCount = sessions.reduce((n, s) => n + (s.sets?.length ?? 0), 0);
+  const expectedExerciseCount = programs.reduce((n, p) => n + (p.exercises?.length ?? 0), 0);
 
-  programs.forEach((p, pi) => {
-    const programId = uid();
-    statements.push({
-      sql: "INSERT INTO programs (id, profile_id, name, sort_order) VALUES (?, ?, ?, ?)",
-      args: [programId, newProfileId, p.name, pi],
-    });
-    (p.exercises || []).forEach((ex, ei) => {
-      const newExId = uid();
-      if (ex.id) exerciseIdMap.set(ex.id, newExId);
+  const newProfileId = uid();
+
+  try {
+    await dbRun("INSERT INTO profiles (id, name, created_at, default_rest_seconds) VALUES (?, ?, ?, 90)", [
+      newProfileId,
+      name,
+      new Date().toISOString(),
+    ]);
+
+    const exerciseIdMap = new Map<string, string>();
+    const programIdMap = new Map<string, string>();
+    const statements: { sql: string; args: unknown[] }[] = [];
+
+    programs.forEach((p, pi) => {
+      const programId = uid();
+      if (p.id) programIdMap.set(p.id, programId);
       statements.push({
-        sql: "INSERT INTO exercises (id, program_id, name, sort_order) VALUES (?, ?, ?, ?)",
-        args: [newExId, programId, ex.name, ei],
+        sql: "INSERT INTO programs (id, profile_id, name, sort_order) VALUES (?, ?, ?, ?)",
+        args: [programId, newProfileId, p.name, pi],
+      });
+      (p.exercises || []).forEach((ex, ei) => {
+        const newExId = uid();
+        if (ex.id) exerciseIdMap.set(ex.id, newExId);
+        statements.push({
+          sql: "INSERT INTO exercises (id, program_id, name, sort_order) VALUES (?, ?, ?, ?)",
+          args: [newExId, programId, ex.name, ei],
+        });
       });
     });
-  });
 
-  sessions.forEach((s) => {
-    const sessionId = uid();
-    statements.push({
-      sql: "INSERT INTO sessions (id, profile_id, program_id, program_name, created_at) VALUES (?, ?, ?, ?, ?)",
-      args: [sessionId, newProfileId, null, s.programName, s.createdAt || new Date().toISOString()],
-    });
-    (s.sets || []).forEach((set) => {
-      const mappedExId = exerciseIdMap.get(set.exerciseId) || set.exerciseId;
+    sessions.forEach((s) => {
+      const sessionId = uid();
+      const mappedProgramId = (s.programId && programIdMap.get(s.programId)) || null;
       statements.push({
-        sql: "INSERT INTO sets (id, session_id, exercise_id, weight, reps, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        args: [uid(), sessionId, mappedExId, set.weight, set.reps, set.createdAt || new Date().toISOString()],
+        sql: "INSERT INTO sessions (id, profile_id, program_id, program_name, created_at) VALUES (?, ?, ?, ?, ?)",
+        args: [sessionId, newProfileId, mappedProgramId, s.programName, s.createdAt || new Date().toISOString()],
+      });
+      (s.sets || []).forEach((set) => {
+        const mappedExId = exerciseIdMap.get(set.exerciseId) || set.exerciseId;
+        statements.push({
+          sql: "INSERT INTO sets (id, session_id, exercise_id, weight, reps, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+          args: [uid(), sessionId, mappedExId, set.weight, set.reps, set.createdAt || new Date().toISOString()],
+        });
       });
     });
-  });
 
-  if (statements.length) await dbBatch(statements);
+    if (statements.length) await dbBatch(statements);
 
-  await setActiveProfileCookie(newProfileId);
-  revalidateAll();
-  return { error: null };
+    // Verify against the DB rather than trusting the statements-ran-without-
+    // throwing assumption -- catches any silent partial application.
+    const actualCounts = await Promise.all([
+      dbGet<{ c: number }>("SELECT COUNT(*) as c FROM programs WHERE profile_id = ?", [newProfileId]),
+      dbGet<{ c: number }>("SELECT COUNT(*) as c FROM sessions WHERE profile_id = ?", [newProfileId]),
+      dbGet<{ c: number }>(
+        "SELECT COUNT(*) as c FROM sets WHERE session_id IN (SELECT id FROM sessions WHERE profile_id = ?)",
+        [newProfileId]
+      ),
+    ]);
+    const [actualPrograms, actualSessions, actualSets] = actualCounts.map((r) => r?.c ?? 0);
+
+    if (actualPrograms !== programs.length || actualSessions !== sessions.length || actualSets !== expectedSetCount) {
+      return {
+        error: null,
+        partial: true,
+        summary: `Imported ${actualPrograms}/${programs.length} programs, ${actualSessions}/${sessions.length} workouts, ${actualSets}/${expectedSetCount} sets — some data didn't make it in. Try importing again, or import in a moment if this was a timeout.`,
+      };
+    }
+
+    await setActiveProfileCookie(newProfileId);
+    revalidateAll();
+    return {
+      error: null,
+      partial: false,
+      summary: `Imported ${actualPrograms} programs (${expectedExerciseCount} exercises), ${actualSessions} workouts, ${actualSets} sets.`,
+    };
+  } catch (err) {
+    // Clean up the partially-created profile so retrying doesn't pile up
+    // broken duplicates.
+    await dbBatch([
+      { sql: `DELETE FROM sets WHERE session_id IN (SELECT id FROM sessions WHERE profile_id = ?)`, args: [newProfileId] },
+      { sql: "DELETE FROM sessions WHERE profile_id = ?", args: [newProfileId] },
+      { sql: `DELETE FROM exercises WHERE program_id IN (SELECT id FROM programs WHERE profile_id = ?)`, args: [newProfileId] },
+      { sql: `DELETE FROM program_days WHERE program_id IN (SELECT id FROM programs WHERE profile_id = ?)`, args: [newProfileId] },
+      { sql: "DELETE FROM programs WHERE profile_id = ?", args: [newProfileId] },
+      { sql: "DELETE FROM profiles WHERE id = ?", args: [newProfileId] },
+    ]).catch(() => {});
+    const message = err instanceof Error ? err.message : String(err);
+    return { error: `Import failed: ${message}. Nothing was saved — try again.` };
+  }
 }
 
 // Kept here so the stats page can compute PRs via a server action if ever

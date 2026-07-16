@@ -3,6 +3,10 @@ import { createProfileAction, renameProfileAction, deleteProfileAction } from "@
 import { AddItemForm, RenameButton, DeleteButton } from "@/components/CrudControls";
 import { SwitchProfileButton, ImportBackupForm } from "@/components/ProfileControls";
 
+// Importing a large backup means one big batch of inserts against a remote
+// database -- give it more headroom than Vercel's short default timeout.
+export const maxDuration = 60;
+
 export default async function ProfilesPage() {
   const active = await getActiveProfile();
   const profiles = await listProfiles();

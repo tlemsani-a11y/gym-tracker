@@ -158,7 +158,17 @@ export async function dbRun(sql: string, args: unknown[] = []): Promise<void> {
   await db.execute({ sql, args: args as never });
 }
 
+// Turso is a remote HTTP database -- unlike a local SQLite file, every
+// batch is a network round trip with real size/time cost. Chunking keeps
+// each request small and fast, and means a big import can't silently lose
+// its tail end (e.g. sets, which tend to be inserted last) if one request
+// were to hit a size or time limit.
+const BATCH_CHUNK_SIZE = 75;
+
 export async function dbBatch(statements: { sql: string; args?: unknown[] }[]): Promise<void> {
   await ready();
-  await db.batch(statements.map((s) => ({ sql: s.sql, args: (s.args ?? []) as never })));
+  for (let i = 0; i < statements.length; i += BATCH_CHUNK_SIZE) {
+    const chunk = statements.slice(i, i + BATCH_CHUNK_SIZE);
+    await db.batch(chunk.map((s) => ({ sql: s.sql, args: (s.args ?? []) as never })));
+  }
 }

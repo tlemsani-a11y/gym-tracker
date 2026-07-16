@@ -1,16 +1,27 @@
 import Link from "next/link";
-import { getProgram, getExercises, getSetsForSession, type SessionRow } from "@/lib/queries";
+import { getExercise, getSetsForSession, type SessionRow } from "@/lib/queries";
 import { fmtDate } from "@/lib/calc";
 import { DeleteSessionButton } from "@/components/DeleteSessionButton";
 
 export async function SessionSummaryCard({ session, timeZone }: { session: SessionRow; timeZone: string }) {
-  const program = session.program_id ? await getProgram(session.program_id) : undefined;
-  const exercises = program ? await getExercises(program.id) : [];
   const sets = await getSetsForSession(session.id);
 
-  const groups = exercises
-    .map((ex) => ({ ex, exSets: sets.filter((s) => s.exercise_id === ex.id) }))
-    .filter((g) => g.exSets.length > 0);
+  // Group directly from the sets that were actually logged, rather than by
+  // walking program -> exercises -> matching sets. That indirect path
+  // silently hides real, correctly-stored sets whenever a session's
+  // program link is missing or stale (e.g. an imported backup whose
+  // program was later renamed or deleted) -- grouping from the sets
+  // themselves is robust to that, and matches how Stats already handles
+  // exercises that no longer exist ("Deleted exercise").
+  const exerciseIds = Array.from(new Set(sets.map((s) => s.exercise_id)));
+  const exerciseNames = await Promise.all(
+    exerciseIds.map(async (id) => (await getExercise(id))?.name ?? "Deleted exercise")
+  );
+  const groups = exerciseIds.map((id, i) => ({
+    id,
+    name: exerciseNames[i],
+    exSets: sets.filter((s) => s.exercise_id === id),
+  }));
 
   return (
     <div className="card">
@@ -27,9 +38,9 @@ export async function SessionSummaryCard({ session, timeZone }: { session: Sessi
         </span>
       </div>
       {groups.length ? (
-        groups.map(({ ex, exSets }) => (
-          <div key={ex.id} style={{ marginTop: "0.5rem" }}>
-            <strong>{ex.name}</strong>
+        groups.map(({ id, name, exSets }) => (
+          <div key={id} style={{ marginTop: "0.5rem" }}>
+            <strong>{name}</strong>
             {exSets.map((s, i) => (
               <div key={s.id} className="muted">Set {i + 1} → {s.weight} kg × {s.reps}</div>
             ))}

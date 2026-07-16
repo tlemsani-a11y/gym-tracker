@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getActiveProfile } from "@/lib/profile-session";
 import { getTimeZone } from "@/lib/timezone-session";
-import { getSession, getProgram, getExercises, getSetsForSession } from "@/lib/queries";
+import { getSession, getProgram, getExercises, getExercise, getSetsForSession, type Exercise } from "@/lib/queries";
 import { plateColorClass, fmtDate } from "@/lib/calc";
 import { SessionExerciseCard } from "@/components/SessionExerciseCard";
 import { RestPresetButtons } from "@/components/RestPresetButtons";
@@ -16,8 +16,23 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
   if (!session || session.profile_id !== profile.id) notFound();
 
   const program = session.program_id ? await getProgram(session.program_id) : undefined;
-  const exercises = program ? await getExercises(program.id) : [];
+  const programExercises = program ? await getExercises(program.id) : [];
   const sets = await getSetsForSession(id);
+
+  // Normally every set's exercise comes from the session's linked program.
+  // But a session can end up without a valid program link (e.g. an
+  // imported backup whose program was later renamed or deleted) while its
+  // sets are still perfectly intact -- fall back to whatever exercises
+  // those sets actually reference so the workout still shows up here.
+  const coveredIds = new Set(programExercises.map((e) => e.id));
+  const extraIds = Array.from(new Set(sets.map((s) => s.exercise_id))).filter((eid) => !coveredIds.has(eid));
+  const extraExercises = await Promise.all(
+    extraIds.map(async (eid): Promise<Exercise> => {
+      const ex = await getExercise(eid);
+      return ex ?? { id: eid, program_id: "", name: "Deleted exercise", sort_order: 999 };
+    })
+  );
+  const exercises = [...programExercises, ...extraExercises];
 
   return (
     <>

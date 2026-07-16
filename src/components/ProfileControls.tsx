@@ -42,13 +42,22 @@ export function ImportBackupForm() {
     fd.set("file", file);
     fd.set("name", name.trim());
     startTransition(async () => {
-      const result = await importProfileAction(fd);
-      e.target.value = "";
-      if (result?.error) {
-        showToast(result.error);
-      } else {
-        showToast(`Imported as "${name.trim()}"`);
+      try {
+        const result = await importProfileAction(fd);
+        e.target.value = "";
+        if (result?.error) {
+          window.alert(result.error);
+          return;
+        }
+        if (result?.partial) {
+          window.alert(`Imported as "${name.trim()}", but not everything made it in:\n\n${result.summary}`);
+        } else {
+          showToast(`Imported as "${name.trim()}" — ${result?.summary ?? ""}`);
+        }
         router.refresh();
+      } catch (err) {
+        e.target.value = "";
+        window.alert(`Import failed: ${err instanceof Error ? err.message : String(err)}. Try again.`);
       }
     });
   }

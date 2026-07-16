@@ -100,6 +100,16 @@ export async function deleteProgram(programId: string) {
   ]);
 }
 
+export async function deletePrograms(programIds: string[]): Promise<void> {
+  if (!programIds.length) return;
+  const placeholders = programIds.map(() => "?").join(",");
+  await dbBatch([
+    { sql: `DELETE FROM exercises WHERE program_id IN (${placeholders})`, args: programIds },
+    { sql: `DELETE FROM program_days WHERE program_id IN (${placeholders})`, args: programIds },
+    { sql: `DELETE FROM programs WHERE id IN (${placeholders})`, args: programIds },
+  ]);
+}
+
 export async function addExercise(programId: string, name: string) {
   const row = await dbGet<{ m: number }>("SELECT COALESCE(MAX(sort_order), -1) as m FROM exercises WHERE program_id = ?", [programId]);
   await dbRun("INSERT INTO exercises (id, program_id, name, sort_order) VALUES (?, ?, ?, ?)", [
@@ -197,6 +207,18 @@ export async function deleteSession(sessionId: string): Promise<{ session: Sessi
   return { session, sets };
 }
 
+export async function deleteSessions(sessionIds: string[]): Promise<{ sessions: SessionRow[]; sets: SetRow[] }> {
+  if (!sessionIds.length) return { sessions: [], sets: [] };
+  const placeholders = sessionIds.map(() => "?").join(",");
+  const sessions = await dbAll<SessionRow>(`SELECT * FROM sessions WHERE id IN (${placeholders})`, sessionIds);
+  const sets = await dbAll<SetRow>(`SELECT * FROM sets WHERE session_id IN (${placeholders})`, sessionIds);
+  await dbBatch([
+    { sql: `DELETE FROM sets WHERE session_id IN (${placeholders})`, args: sessionIds },
+    { sql: `DELETE FROM sessions WHERE id IN (${placeholders})`, args: sessionIds },
+  ]);
+  return { sessions, sets };
+}
+
 export async function restoreSession(session: SessionRow, sets: SetRow[]): Promise<void> {
   const statements: { sql: string; args: unknown[] }[] = [
     {
@@ -209,6 +231,20 @@ export async function restoreSession(session: SessionRow, sets: SetRow[]): Promi
     })),
   ];
   await dbBatch(statements);
+}
+
+export async function restoreSessions(sessions: SessionRow[], sets: SetRow[]): Promise<void> {
+  const statements: { sql: string; args: unknown[] }[] = [
+    ...sessions.map((session) => ({
+      sql: "INSERT INTO sessions (id, profile_id, program_id, program_name, created_at) VALUES (?, ?, ?, ?, ?)",
+      args: [session.id, session.profile_id, session.program_id, session.program_name, session.created_at],
+    })),
+    ...sets.map((s) => ({
+      sql: "INSERT INTO sets (id, session_id, exercise_id, weight, reps, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      args: [s.id, s.session_id, s.exercise_id, s.weight, s.reps, s.created_at],
+    })),
+  ];
+  if (statements.length) await dbBatch(statements);
 }
 
 // ---------- Stats / PRs ----------

@@ -40,6 +40,11 @@ export async function deleteProgramAction(programId: string) {
   revalidateAll();
 }
 
+export async function deleteProgramsAction(programIds: string[]) {
+  await q.deletePrograms(programIds);
+  revalidateAll();
+}
+
 export async function addExerciseAction(programId: string, formData: FormData) {
   const name = String(formData.get("name") || "").trim();
   if (!name) return;
@@ -117,8 +122,19 @@ export async function deleteSessionAction(sessionId: string) {
   return removed;
 }
 
+export async function deleteSessionsAction(sessionIds: string[]) {
+  const removed = await q.deleteSessions(sessionIds);
+  revalidateAll();
+  return removed;
+}
+
 export async function restoreSessionAction(session: q.SessionRow, sets: q.SetRow[]) {
   await q.restoreSession(session, sets);
+  revalidateAll();
+}
+
+export async function restoreSessionsAction(sessions: q.SessionRow[], sets: q.SetRow[]) {
+  await q.restoreSessions(sessions, sets);
   revalidateAll();
 }
 

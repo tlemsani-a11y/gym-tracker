@@ -4,6 +4,7 @@ import { getTimeZone } from "@/lib/timezone-session";
 import { getSessions } from "@/lib/queries";
 import { calendarDate, addCalendarDays, calendarDateKey, zonedToday, zonedDateKey } from "@/lib/calc";
 import { SessionSummaryCard } from "@/components/SessionSummaryCard";
+import { HistoryBulkSelect } from "@/components/HistoryBulkSelect";
 
 function buildCalendarCells(year: number, month: number) {
   const firstOfMonth = calendarDate(year, month + 1, 1);
@@ -98,7 +99,9 @@ export default async function HistoryPage({
         </div>
         {selectedKey ? <span className="eyebrow">{dayLabel}</span> : null}
         {daySessions.length ? (
-          daySessions.map((s) => <SessionSummaryCard key={s.id} session={s} timeZone={timeZone} />)
+          <HistoryBulkSelect sessionIds={daySessions.map((s) => s.id)}>
+            {daySessions.map((s) => <SessionSummaryCard key={s.id} session={s} timeZone={timeZone} />)}
+          </HistoryBulkSelect>
         ) : (
           <div className="empty-state">{selectedKey ? "No workout logged this day." : "Tap a day to see what you did."}</div>
         )}
@@ -112,7 +115,9 @@ export default async function HistoryPage({
       <h1>History</h1>
       {toggleHtml}
       {sessions.length ? (
-        sessions.map((s) => <SessionSummaryCard key={s.id} session={s} timeZone={timeZone} />)
+        <HistoryBulkSelect sessionIds={sessions.map((s) => s.id)}>
+          {sessions.map((s) => <SessionSummaryCard key={s.id} session={s} timeZone={timeZone} />)}
+        </HistoryBulkSelect>
       ) : (
         <div className="empty-state">No workout sessions yet. Start one from the Dashboard.</div>
       )}

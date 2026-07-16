@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getExercise, getSetsForSession, type SessionRow } from "@/lib/queries";
 import { fmtDate } from "@/lib/calc";
 import { DeleteSessionButton } from "@/components/DeleteSessionButton";
+import { SessionSelectCheckbox } from "@/components/HistoryBulkSelect";
 
 export async function SessionSummaryCard({ session, timeZone }: { session: SessionRow; timeZone: string }) {
   const sets = await getSetsForSession(session.id);
@@ -26,6 +27,7 @@ export async function SessionSummaryCard({ session, timeZone }: { session: Sessi
   return (
     <div className="card">
       <div className="row" style={{ alignItems: "center" }}>
+        <SessionSelectCheckbox sessionId={session.id} />
         <div>
           <h2 style={{ marginBottom: "0.15rem" }}>{session.program_name}</h2>
           <p className="muted" style={{ margin: 0 }}>{fmtDate(session.created_at, timeZone)}</p>

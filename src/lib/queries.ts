@@ -64,6 +64,18 @@ export function getExercise(exerciseId: string): Promise<Exercise | undefined> {
   return dbGet<Exercise>("SELECT * FROM exercises WHERE id = ?", [exerciseId]);
 }
 
+/** Every exercise across every one of a profile's programs, in one query --
+ *  used to build in-memory lookup maps for merge-imports rather than
+ *  querying per-program. */
+export function getAllExercisesForProfile(profileId: string): Promise<Exercise[]> {
+  return dbAll<Exercise>(
+    `SELECT exercises.* FROM exercises
+     JOIN programs ON programs.id = exercises.program_id
+     WHERE programs.profile_id = ?`,
+    [profileId]
+  );
+}
+
 export async function createProgram(profileId: string, name: string) {
   const row = await dbGet<{ m: number }>("SELECT COALESCE(MAX(sort_order), -1) as m FROM programs WHERE profile_id = ?", [profileId]);
   const id = uid();

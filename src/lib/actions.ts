@@ -203,89 +203,122 @@ export async function switchProfileAction(profileId: string) {
 
 // ---------- Backup import ----------
 
-export async function importProfileAction(formData: FormData) {
-  const file = formData.get("file") as File | null;
-  const name = String(formData.get("name") || "").trim();
-  if (!file || !name) return { error: "Missing file or name" };
+type LegacyExercise = { id?: string; name: string };
+type LegacyProgram = { id?: string; name: string; exercises: LegacyExercise[] };
+type LegacySet = { id?: string; exerciseId: string; weight: number; reps: number; createdAt?: string };
+type LegacySession = {
+  id?: string;
+  programId?: string;
+  programName: string;
+  createdAt?: string;
+  sets: LegacySet[];
+};
 
-  let parsed: unknown;
-  try {
-    const text = await file.text();
-    parsed = JSON.parse(text);
-  } catch {
-    return { error: "Couldn't read that file — make sure it's an unmodified exported backup." };
-  }
+function normalizeName(name: string) {
+  return name.trim().toLowerCase();
+}
 
+function parseBackupFile(parsed: unknown): { programs: LegacyProgram[]; sessions: LegacySession[] } | { error: string } {
   const payload = parsed as {
     data?: { programs?: unknown[]; sessions?: unknown[] };
     programs?: unknown[];
     sessions?: unknown[];
   };
   const importedData = payload && payload.data ? payload.data : payload;
-
   if (!importedData || !Array.isArray(importedData.programs) || !Array.isArray(importedData.sessions)) {
     return { error: "Not a recognized backup file" };
   }
+  return { programs: importedData.programs as LegacyProgram[], sessions: importedData.sessions as LegacySession[] };
+}
 
-  type LegacyExercise = { id?: string; name: string };
-  type LegacyProgram = { id?: string; name: string; exercises: LegacyExercise[] };
-  type LegacySet = { id?: string; exerciseId: string; weight: number; reps: number; createdAt?: string };
-  type LegacySession = {
-    id?: string;
-    programId?: string;
-    programName: string;
-    createdAt?: string;
-    sets: LegacySet[];
-  };
-
-  const programs = importedData.programs as LegacyProgram[];
-  const sessions = importedData.sessions as LegacySession[];
-  const expectedSetCount = sessions.reduce((n, s) => n + (s.sets?.length ?? 0), 0);
-  const expectedExerciseCount = programs.reduce((n, p) => n + (p.exercises?.length ?? 0), 0);
-
-  const newProfileId = uid();
+/** Imports a parsed backup into `profileId`, merging by name/timestamp
+ *  rather than blindly inserting -- safe to call on an empty, brand-new
+ *  profile (everything will be "new") or repeatedly against the same
+ *  profile (matching programs/exercises get reused, already-imported
+ *  workouts get skipped instead of duplicated). */
+async function importBackupIntoProfile(profileId: string, parsed: unknown) {
+  const result = parseBackupFile(parsed);
+  if ("error" in result) return { error: result.error };
+  const { programs, sessions } = result;
 
   try {
-    await dbRun("INSERT INTO profiles (id, name, created_at, default_rest_seconds) VALUES (?, ?, ?, 90)", [
-      newProfileId,
-      name,
-      new Date().toISOString(),
+    const [existingPrograms, existingExercises, existingSessions] = await Promise.all([
+      q.getPrograms(profileId),
+      q.getAllExercisesForProfile(profileId),
+      q.getSessions(profileId),
     ]);
 
-    const exerciseIdMap = new Map<string, string>();
-    const programIdMap = new Map<string, string>();
-    const statements: { sql: string; args: unknown[] }[] = [];
+    const programByName = new Map<string, string>();
+    existingPrograms.forEach((p) => programByName.set(normalizeName(p.name), p.id));
+    let nextProgramOrder = existingPrograms.reduce((max, p) => Math.max(max, p.sort_order + 1), 0);
 
-    programs.forEach((p, pi) => {
-      const programId = uid();
+    const exerciseByKey = new Map<string, string>(); // `${programId}::${name}` -> id
+    const nextExerciseOrder = new Map<string, number>(); // programId -> next sort_order
+    existingExercises.forEach((ex) => {
+      exerciseByKey.set(`${ex.program_id}::${normalizeName(ex.name)}`, ex.id);
+      nextExerciseOrder.set(ex.program_id, Math.max(nextExerciseOrder.get(ex.program_id) ?? 0, ex.sort_order + 1));
+    });
+
+    const sessionDedup = new Set(existingSessions.map((s) => `${s.program_name}::${s.created_at}`));
+
+    const statements: { sql: string; args: unknown[] }[] = [];
+    const programIdMap = new Map<string, string>(); // legacy id -> resolved id
+    const exerciseIdMap = new Map<string, string>(); // legacy id -> resolved id
+    let newPrograms = 0;
+    let newExercises = 0;
+
+    programs.forEach((p) => {
+      const key = normalizeName(p.name);
+      let programId = programByName.get(key);
+      if (!programId) {
+        programId = uid();
+        programByName.set(key, programId);
+        statements.push({ sql: "INSERT INTO programs (id, profile_id, name, sort_order) VALUES (?, ?, ?, ?)", args: [programId, profileId, p.name, nextProgramOrder++] });
+        newPrograms++;
+      }
       if (p.id) programIdMap.set(p.id, programId);
-      statements.push({
-        sql: "INSERT INTO programs (id, profile_id, name, sort_order) VALUES (?, ?, ?, ?)",
-        args: [programId, newProfileId, p.name, pi],
-      });
-      (p.exercises || []).forEach((ex, ei) => {
-        const newExId = uid();
-        if (ex.id) exerciseIdMap.set(ex.id, newExId);
-        statements.push({
-          sql: "INSERT INTO exercises (id, program_id, name, sort_order) VALUES (?, ?, ?, ?)",
-          args: [newExId, programId, ex.name, ei],
-        });
+
+      (p.exercises || []).forEach((ex) => {
+        const exKey = `${programId}::${normalizeName(ex.name)}`;
+        let exId = exerciseByKey.get(exKey);
+        if (!exId) {
+          exId = uid();
+          exerciseByKey.set(exKey, exId);
+          const order = nextExerciseOrder.get(programId!) ?? 0;
+          nextExerciseOrder.set(programId!, order + 1);
+          statements.push({ sql: "INSERT INTO exercises (id, program_id, name, sort_order) VALUES (?, ?, ?, ?)", args: [exId, programId, ex.name, order] });
+          newExercises++;
+        }
+        if (ex.id) exerciseIdMap.set(ex.id, exId);
       });
     });
 
+    let newSessions = 0;
+    let skippedSessions = 0;
+    let newSets = 0;
+
     sessions.forEach((s) => {
+      const createdAt = s.createdAt || new Date().toISOString();
+      const dedupKey = `${s.programName}::${createdAt}`;
+      if (sessionDedup.has(dedupKey)) {
+        skippedSessions++;
+        return;
+      }
+      sessionDedup.add(dedupKey);
       const sessionId = uid();
       const mappedProgramId = (s.programId && programIdMap.get(s.programId)) || null;
       statements.push({
         sql: "INSERT INTO sessions (id, profile_id, program_id, program_name, created_at) VALUES (?, ?, ?, ?, ?)",
-        args: [sessionId, newProfileId, mappedProgramId, s.programName, s.createdAt || new Date().toISOString()],
+        args: [sessionId, profileId, mappedProgramId, s.programName, createdAt],
       });
+      newSessions++;
       (s.sets || []).forEach((set) => {
         const mappedExId = exerciseIdMap.get(set.exerciseId) || set.exerciseId;
         statements.push({
           sql: "INSERT INTO sets (id, session_id, exercise_id, weight, reps, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-          args: [uid(), sessionId, mappedExId, set.weight, set.reps, set.createdAt || new Date().toISOString()],
+          args: [uid(), sessionId, mappedExId, set.weight, set.reps, set.createdAt || createdAt],
         });
+        newSets++;
       });
     });
 
@@ -293,45 +326,86 @@ export async function importProfileAction(formData: FormData) {
 
     // Verify against the DB rather than trusting the statements-ran-without-
     // throwing assumption -- catches any silent partial application.
-    const actualCounts = await Promise.all([
-      dbGet<{ c: number }>("SELECT COUNT(*) as c FROM programs WHERE profile_id = ?", [newProfileId]),
-      dbGet<{ c: number }>("SELECT COUNT(*) as c FROM sessions WHERE profile_id = ?", [newProfileId]),
-      dbGet<{ c: number }>(
-        "SELECT COUNT(*) as c FROM sets WHERE session_id IN (SELECT id FROM sessions WHERE profile_id = ?)",
-        [newProfileId]
-      ),
+    const [afterPrograms, afterSessions, afterSets] = await Promise.all([
+      dbGet<{ c: number }>("SELECT COUNT(*) as c FROM programs WHERE profile_id = ?", [profileId]),
+      dbGet<{ c: number }>("SELECT COUNT(*) as c FROM sessions WHERE profile_id = ?", [profileId]),
+      dbGet<{ c: number }>("SELECT COUNT(*) as c FROM sets WHERE session_id IN (SELECT id FROM sessions WHERE profile_id = ?)", [profileId]),
     ]);
-    const [actualPrograms, actualSessions, actualSets] = actualCounts.map((r) => r?.c ?? 0);
+    const expectedPrograms = existingPrograms.length + newPrograms;
+    const expectedSessions = existingSessions.length + newSessions;
+    const actualPrograms = afterPrograms?.c ?? 0;
+    const actualSessions = afterSessions?.c ?? 0;
 
-    if (actualPrograms !== programs.length || actualSessions !== sessions.length || actualSets !== expectedSetCount) {
+    if (actualPrograms !== expectedPrograms || actualSessions !== expectedSessions) {
       return {
         error: null,
         partial: true,
-        summary: `Imported ${actualPrograms}/${programs.length} programs, ${actualSessions}/${sessions.length} workouts, ${actualSets}/${expectedSetCount} sets — some data didn't make it in. Try importing again, or import in a moment if this was a timeout.`,
+        summary: `Only partly imported: expected ${expectedPrograms} programs / ${expectedSessions} workouts total, got ${actualPrograms}/${actualSessions}. Try importing again.`,
       };
     }
 
-    await setActiveProfileCookie(newProfileId);
     revalidateAll();
+    const skippedNote = skippedSessions ? ` (${skippedSessions} workout${skippedSessions === 1 ? "" : "s"} already there, skipped)` : "";
     return {
       error: null,
       partial: false,
-      summary: `Imported ${actualPrograms} programs (${expectedExerciseCount} exercises), ${actualSessions} workouts, ${actualSets} sets.`,
+      summary: `+${newPrograms} program${newPrograms === 1 ? "" : "s"}, +${newExercises} exercise${newExercises === 1 ? "" : "s"}, +${newSessions} workout${newSessions === 1 ? "" : "s"}, +${newSets} set${newSets === 1 ? "" : "s"}${skippedNote}. Total now: ${actualPrograms} programs, ${actualSessions} workouts, ${afterSets?.c ?? 0} sets.`,
     };
   } catch (err) {
-    // Clean up the partially-created profile so retrying doesn't pile up
-    // broken duplicates.
-    await dbBatch([
-      { sql: `DELETE FROM sets WHERE session_id IN (SELECT id FROM sessions WHERE profile_id = ?)`, args: [newProfileId] },
-      { sql: "DELETE FROM sessions WHERE profile_id = ?", args: [newProfileId] },
-      { sql: `DELETE FROM exercises WHERE program_id IN (SELECT id FROM programs WHERE profile_id = ?)`, args: [newProfileId] },
-      { sql: `DELETE FROM program_days WHERE program_id IN (SELECT id FROM programs WHERE profile_id = ?)`, args: [newProfileId] },
-      { sql: "DELETE FROM programs WHERE profile_id = ?", args: [newProfileId] },
-      { sql: "DELETE FROM profiles WHERE id = ?", args: [newProfileId] },
-    ]).catch(() => {});
     const message = err instanceof Error ? err.message : String(err);
-    return { error: `Import failed: ${message}. Nothing was saved — try again.` };
+    return { error: `Import failed: ${message}. Try again.` };
   }
+}
+
+export async function importProfileAction(formData: FormData) {
+  const file = formData.get("file") as File | null;
+  const name = String(formData.get("name") || "").trim();
+  if (!file || !name) return { error: "Missing file or name" };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch {
+    return { error: "Couldn't read that file — make sure it's an unmodified exported backup." };
+  }
+
+  const newProfileId = uid();
+  await dbRun("INSERT INTO profiles (id, name, created_at, default_rest_seconds) VALUES (?, ?, ?, 90)", [
+    newProfileId,
+    name,
+    new Date().toISOString(),
+  ]);
+
+  const result = await importBackupIntoProfile(newProfileId, parsed);
+  if (result.error) {
+    // Creating the profile succeeded but the import didn't -- clean up
+    // rather than leaving an empty orphaned profile behind.
+    await dbRun("DELETE FROM profiles WHERE id = ?", [newProfileId]).catch(() => {});
+    return result;
+  }
+
+  await setActiveProfileCookie(newProfileId);
+  revalidateAll();
+  return result;
+}
+
+export async function mergeImportAction(targetProfileId: string, formData: FormData) {
+  const file = formData.get("file") as File | null;
+  if (!file) return { error: "Missing file" };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch {
+    return { error: "Couldn't read that file — make sure it's an unmodified exported backup." };
+  }
+
+  const result = await importBackupIntoProfile(targetProfileId, parsed);
+  if (!result.error) {
+    await setActiveProfileCookie(targetProfileId);
+    revalidateAll();
+  }
+  return result;
 }
 
 // Kept here so the stats page can compute PRs via a server action if ever

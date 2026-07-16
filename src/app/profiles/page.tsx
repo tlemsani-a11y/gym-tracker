@@ -1,7 +1,7 @@
 import { getActiveProfile, listProfiles } from "@/lib/profile-session";
 import { createProfileAction, renameProfileAction, deleteProfileAction } from "@/lib/actions";
 import { AddItemForm, RenameButton, DeleteButton } from "@/components/CrudControls";
-import { SwitchProfileButton, ImportBackupForm } from "@/components/ProfileControls";
+import { SwitchProfileButton, ImportBackupForm, MergeImportButton } from "@/components/ProfileControls";
 
 // Importing a large backup means one big batch of inserts against a remote
 // database -- give it more headroom than Vercel's short default timeout.
@@ -29,6 +29,7 @@ export default async function ProfilesPage() {
           <div className="row" style={{ marginTop: "0.6rem" }}>
             <RenameButton currentName={p.name} promptLabel="Rename profile" action={renameProfileAction.bind(null, p.id)} />
             <a className="btn btn-sm" href={`/api/export?profileId=${p.id}`}>Export backup</a>
+            <MergeImportButton profileId={p.id} />
             {profiles.length > 1 ? (
               <DeleteButton
                 confirmMessage={`Delete profile "${p.name}" and everything in it? This cannot be undone.`}
@@ -45,8 +46,12 @@ export default async function ProfilesPage() {
       </div>
 
       <div className="card">
-        <h2>Restore from backup</h2>
-        <p className="muted">Import a previously exported JSON backup as a new profile.</p>
+        <h2>Restore backup as a new profile</h2>
+        <p className="muted">
+          Import a JSON backup as a brand new profile. To add a backup&apos;s data into a profile that already
+          exists instead, use <strong>Merge backup</strong> on that profile above — matching programs/exercises
+          are reused and workouts already there are skipped, so it&apos;s safe to import the same file more than once.
+        </p>
         <ImportBackupForm />
       </div>
     </>

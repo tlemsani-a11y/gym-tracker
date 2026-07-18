@@ -1,12 +1,20 @@
 import Link from "next/link";
-import { getExercise, getSetsForSession, type SessionRow } from "@/lib/queries";
+import type { SessionRow, SetRow } from "@/lib/queries";
 import { fmtDate } from "@/lib/calc";
 import { DeleteSessionButton } from "@/components/DeleteSessionButton";
 import { SessionSelectCheckbox } from "@/components/HistoryBulkSelect";
 
-export async function SessionSummaryCard({ session, timeZone }: { session: SessionRow; timeZone: string }) {
-  const sets = await getSetsForSession(session.id);
-
+export function SessionSummaryCard({
+  session,
+  sets,
+  exerciseNameById,
+  timeZone,
+}: {
+  session: SessionRow;
+  sets: SetRow[];
+  exerciseNameById: Map<string, string>;
+  timeZone: string;
+}) {
   // Group directly from the sets that were actually logged, rather than by
   // walking program -> exercises -> matching sets. That indirect path
   // silently hides real, correctly-stored sets whenever a session's
@@ -15,12 +23,9 @@ export async function SessionSummaryCard({ session, timeZone }: { session: Sessi
   // themselves is robust to that, and matches how Stats already handles
   // exercises that no longer exist ("Deleted exercise").
   const exerciseIds = Array.from(new Set(sets.map((s) => s.exercise_id)));
-  const exerciseNames = await Promise.all(
-    exerciseIds.map(async (id) => (await getExercise(id))?.name ?? "Deleted exercise")
-  );
-  const groups = exerciseIds.map((id, i) => ({
+  const groups = exerciseIds.map((id) => ({
     id,
-    name: exerciseNames[i],
+    name: exerciseNameById.get(id) ?? "Deleted exercise",
     exSets: sets.filter((s) => s.exercise_id === id),
   }));
 

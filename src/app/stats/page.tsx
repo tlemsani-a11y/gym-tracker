@@ -1,6 +1,14 @@
 import { getActiveProfile } from "@/lib/profile-session";
 import { getTimeZone } from "@/lib/timezone-session";
-import { getPrograms, getExercises, getAllSetsForExercise, getTopSetPerSessionForExercise, getOverallStats, getBodyweightLogs, type Exercise } from "@/lib/queries";
+import {
+  getPrograms,
+  getAllExercisesForProfile,
+  getAllSetsForProfile,
+  getSessions,
+  getOverallStats,
+  getBodyweightLogs,
+  type SetRow,
+} from "@/lib/queries";
 import { plateColorClass, estOneRM, fmtShortDate } from "@/lib/calc";
 import { BodyweightSection } from "@/components/BodyweightSection";
 import { LineChart } from "@/components/LineChart";
@@ -8,34 +16,56 @@ import { LineChart } from "@/components/LineChart";
 export default async function StatsPage() {
   const profile = await getActiveProfile();
   const timeZone = await getTimeZone();
-  const [overall, logs, programs] = await Promise.all([
+
+  // Six bulk queries total, regardless of how many exercises or workouts
+  // exist -- computing PRs and per-session chart points in memory below
+  // instead of running a query per exercise (and per session within each
+  // exercise) avoids what would otherwise be hundreds of network round
+  // trips against the remote database.
+  const [overall, logs, programs, allExercises, allSets, sessions] = await Promise.all([
     getOverallStats(profile.id),
     getBodyweightLogs(profile.id),
     getPrograms(profile.id),
+    getAllExercisesForProfile(profile.id),
+    getAllSetsForProfile(profile.id),
+    getSessions(profile.id),
   ]);
 
-  const exercisesByProgram = await Promise.all(programs.map((p) => getExercises(p.id)));
-  const allExercises: (Exercise & { programName: string })[] = programs.flatMap((p, i) =>
-    exercisesByProgram[i].map((ex) => ({ ...ex, programName: p.name }))
-  );
+  const programNameById = new Map(programs.map((p) => [p.id, p.name]));
+  const sessionsAsc = [...sessions].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
-  const exerciseStats = await Promise.all(
-    allExercises.map(async (ex) => {
-      const sets = await getAllSetsForExercise(profile.id, ex.id);
-      if (!sets.length) return { ex, sets, maxWeightSet: null, bestEst: 0, points: [] as { label: string; value: number }[] };
+  const setsByExercise = new Map<string, SetRow[]>();
+  allSets.forEach((s) => {
+    const list = setsByExercise.get(s.exercise_id) ?? [];
+    list.push(s);
+    setsByExercise.set(s.exercise_id, list);
+  });
 
-      let maxWeightSet = sets[0];
-      let bestEst = estOneRM(sets[0].weight, sets[0].reps);
-      for (const s of sets) {
-        if (s.weight > maxWeightSet.weight) maxWeightSet = s;
-        const est = estOneRM(s.weight, s.reps);
-        if (est > bestEst) bestEst = est;
-      }
-      const rawPoints = await getTopSetPerSessionForExercise(profile.id, ex.id);
-      const points = rawPoints.map((p) => ({ label: fmtShortDate(p.iso, timeZone), value: p.value }));
-      return { ex, sets, maxWeightSet, bestEst, points };
-    })
-  );
+  const exerciseStats = allExercises.map((ex) => {
+    const sets = setsByExercise.get(ex.id) ?? [];
+    const programName = programNameById.get(ex.program_id) ?? "";
+    if (!sets.length) {
+      return { ex, programName, sets, maxWeightSet: null, bestEst: 0, points: [] as { label: string; value: number }[] };
+    }
+
+    let maxWeightSet = sets[0];
+    let bestEst = estOneRM(sets[0].weight, sets[0].reps);
+    for (const s of sets) {
+      if (s.weight > maxWeightSet.weight) maxWeightSet = s;
+      const est = estOneRM(s.weight, s.reps);
+      if (est > bestEst) bestEst = est;
+    }
+
+    const points: { label: string; value: number }[] = [];
+    for (const session of sessionsAsc) {
+      const sessionSets = sets.filter((s) => s.session_id === session.id);
+      if (!sessionSets.length) continue;
+      const top = sessionSets.reduce((a, b) => (b.weight > a.weight ? b : a));
+      points.push({ label: fmtShortDate(session.created_at, timeZone), value: top.weight });
+    }
+
+    return { ex, programName, sets, maxWeightSet, bestEst, points };
+  });
 
   return (
     <>
@@ -51,13 +81,13 @@ export default async function StatsPage() {
       <BodyweightSection logs={logs} timeZone={timeZone} />
 
       {exerciseStats.length ? (
-        exerciseStats.map(({ ex, sets, maxWeightSet, bestEst, points }, i) => {
+        exerciseStats.map(({ ex, programName, sets, maxWeightSet, bestEst, points }, i) => {
           if (!sets.length) {
             return (
               <div key={ex.id} className={`card ${plateColorClass(i)}`}>
                 <div className="exercise-stat-header">
                   <h2 style={{ margin: 0 }}>{ex.name}</h2>
-                  <span className="muted">{ex.programName}</span>
+                  <span className="muted">{programName}</span>
                 </div>
                 <p className="no-chart-data">No sets logged yet.</p>
               </div>
@@ -67,7 +97,7 @@ export default async function StatsPage() {
             <div key={ex.id} className={`card ${plateColorClass(i)}`}>
               <div className="exercise-stat-header">
                 <h2 style={{ margin: 0 }}>{ex.name}</h2>
-                <span className="muted">{ex.programName}</span>
+                <span className="muted">{programName}</span>
               </div>
               <p className="pr-line">
                 PR: <strong>{maxWeightSet!.weight} kg × {maxWeightSet!.reps}</strong> <span className="pr-badge">Best</span>

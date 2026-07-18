@@ -76,6 +76,20 @@ export function getAllExercisesForProfile(profileId: string): Promise<Exercise[]
   );
 }
 
+/** Every set belonging to any of a profile's sessions, in one query --
+ *  the building block for rendering History/Stats without a query per
+ *  session or per exercise (each of which is a real network round trip
+ *  against a remote database). */
+export function getAllSetsForProfile(profileId: string): Promise<SetRow[]> {
+  return dbAll<SetRow>(
+    `SELECT sets.* FROM sets
+     JOIN sessions ON sessions.id = sets.session_id
+     WHERE sessions.profile_id = ?
+     ORDER BY sets.created_at ASC`,
+    [profileId]
+  );
+}
+
 export async function createProgram(profileId: string, name: string) {
   const row = await dbGet<{ m: number }>("SELECT COALESCE(MAX(sort_order), -1) as m FROM programs WHERE profile_id = ?", [profileId]);
   const id = uid();
@@ -257,20 +271,6 @@ export function getAllSetsForExercise(profileId: string, exerciseId: string): Pr
      ORDER BY sets.created_at ASC`,
     [profileId, exerciseId]
   );
-}
-
-export async function getTopSetPerSessionForExercise(profileId: string, exerciseId: string) {
-  const sessions = (await getSessions(profileId))
-    .slice()
-    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-  const points: { label: string; value: number; iso: string }[] = [];
-  for (const session of sessions) {
-    const sets = (await getSetsForSession(session.id)).filter((s) => s.exercise_id === exerciseId);
-    if (!sets.length) continue;
-    const top = sets.reduce((a, b) => (b.weight > a.weight ? b : a));
-    points.push({ label: session.created_at, value: top.weight, iso: session.created_at });
-  }
-  return points;
 }
 
 export async function getOverallStats(profileId: string) {

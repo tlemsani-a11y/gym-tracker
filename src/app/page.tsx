@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getActiveProfile } from "@/lib/profile-session";
 import { getTimeZone } from "@/lib/timezone-session";
-import { getProgramsWithDays, getSessions, getExercises } from "@/lib/queries";
+import { getProgramsWithDays, getSessions, getAllExercisesForProfile } from "@/lib/queries";
 import {
   plateColorClass,
   fmtDate,
@@ -25,9 +25,12 @@ export default async function DashboardPage({
   const { day: dayParam } = await searchParams;
   const profile = await getActiveProfile();
   const timeZone = await getTimeZone();
-  const programs = await getProgramsWithDays(profile.id);
-  const sessions = await getSessions(profile.id);
-  const exerciseCounts = await Promise.all(programs.map((p) => getExercises(p.id)));
+  const [programs, sessions, allExercises] = await Promise.all([
+    getProgramsWithDays(profile.id),
+    getSessions(profile.id),
+    getAllExercisesForProfile(profile.id),
+  ]);
+  const exerciseCounts = programs.map((p) => allExercises.filter((ex) => ex.program_id === p.id).length);
   const lastSession = sessions[0];
 
   const todayIdx = dayIndex(timeZone);
@@ -68,11 +71,11 @@ export default async function DashboardPage({
         <div className="grid" style={{ marginBottom: "0.85rem" }}>
           {todayPrograms.map((p) => {
             const exIndex = programs.findIndex((pp) => pp.id === p.id);
-            const exercises = exerciseCounts[exIndex];
+            const exerciseCount = exerciseCounts[exIndex];
             return (
               <div key={p.id} className="card today-section-card">
                 <h2>{p.name}</h2>
-                <p className="muted">{exercises.length} exercise{exercises.length === 1 ? "" : "s"}</p>
+                <p className="muted">{exerciseCount} exercise{exerciseCount === 1 ? "" : "s"}</p>
                 <form action={startWorkoutAction.bind(null, p.id)}>
                   <button className="btn btn-primary btn-lg" type="submit">Start Workout</button>
                 </form>
@@ -131,7 +134,7 @@ export default async function DashboardPage({
         {filtered.length ? (
           filtered.map((p) => {
             const exIndex = programs.findIndex((pp) => pp.id === p.id);
-            const exercises = exerciseCounts[exIndex];
+            const exerciseCount = exerciseCounts[exIndex];
             return (
               <div key={p.id} className={`card ${plateColorClass(exIndex)}`}>
                 <div className="card-header-row">
@@ -144,7 +147,7 @@ export default async function DashboardPage({
                     ✕
                   </DeleteButton>
                 </div>
-                <p className="muted" style={{ margin: 0 }}>{exercises.length} exercise{exercises.length === 1 ? "" : "s"}</p>
+                <p className="muted" style={{ margin: 0 }}>{exerciseCount} exercise{exerciseCount === 1 ? "" : "s"}</p>
                 <div className="day-badge-row">
                   {p.days.length ? (
                     p.days.map((d) => (

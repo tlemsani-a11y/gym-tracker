@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getActiveProfile } from "@/lib/profile-session";
 import { getTimeZone } from "@/lib/timezone-session";
-import { getSessions } from "@/lib/queries";
+import { getSessions, getAllSetsForProfile, getAllExercisesForProfile, type SetRow } from "@/lib/queries";
 import { calendarDate, addCalendarDays, calendarDateKey, zonedToday, zonedDateKey } from "@/lib/calc";
 import { SessionSummaryCard } from "@/components/SessionSummaryCard";
 import { HistoryBulkSelect } from "@/components/HistoryBulkSelect";
@@ -28,6 +28,21 @@ export default async function HistoryPage({
   const timeZone = await getTimeZone();
   const view = viewParam === "calendar" ? "calendar" : "list";
 
+  // Fetch everything this page could need in three bulk queries, once --
+  // regardless of session/exercise count -- instead of a query per card.
+  const [sessions, allSets, allExercises] = await Promise.all([
+    getSessions(profile.id),
+    getAllSetsForProfile(profile.id),
+    getAllExercisesForProfile(profile.id),
+  ]);
+  const exerciseNameById = new Map(allExercises.map((ex) => [ex.id, ex.name]));
+  const setsBySession = new Map<string, SetRow[]>();
+  allSets.forEach((s) => {
+    const list = setsBySession.get(s.session_id) ?? [];
+    list.push(s);
+    setsBySession.set(s.session_id, list);
+  });
+
   const today = zonedToday(timeZone);
   const [cursorYear, cursorMonth] = monthParam
     ? monthParam.split("-").map(Number)
@@ -53,7 +68,6 @@ export default async function HistoryPage({
   );
 
   if (view === "calendar") {
-    const sessions = await getSessions(profile.id);
     const trainedKeys = new Set(sessions.map((s) => zonedDateKey(new Date(s.created_at), timeZone)));
     const cells = buildCalendarCells(cursorYear, cursorMonth - 1);
     const daySessions = selectedKey ? sessions.filter((s) => zonedDateKey(new Date(s.created_at), timeZone) === selectedKey) : [];
@@ -100,7 +114,15 @@ export default async function HistoryPage({
         {selectedKey ? <span className="eyebrow">{dayLabel}</span> : null}
         {daySessions.length ? (
           <HistoryBulkSelect sessionIds={daySessions.map((s) => s.id)}>
-            {daySessions.map((s) => <SessionSummaryCard key={s.id} session={s} timeZone={timeZone} />)}
+            {daySessions.map((s) => (
+              <SessionSummaryCard
+                key={s.id}
+                session={s}
+                sets={setsBySession.get(s.id) ?? []}
+                exerciseNameById={exerciseNameById}
+                timeZone={timeZone}
+              />
+            ))}
           </HistoryBulkSelect>
         ) : (
           <div className="empty-state">{selectedKey ? "No workout logged this day." : "Tap a day to see what you did."}</div>
@@ -109,14 +131,21 @@ export default async function HistoryPage({
     );
   }
 
-  const sessions = await getSessions(profile.id);
   return (
     <>
       <h1>History</h1>
       {toggleHtml}
       {sessions.length ? (
         <HistoryBulkSelect sessionIds={sessions.map((s) => s.id)}>
-          {sessions.map((s) => <SessionSummaryCard key={s.id} session={s} timeZone={timeZone} />)}
+          {sessions.map((s) => (
+            <SessionSummaryCard
+              key={s.id}
+              session={s}
+              sets={setsBySession.get(s.id) ?? []}
+              exerciseNameById={exerciseNameById}
+              timeZone={timeZone}
+            />
+          ))}
         </HistoryBulkSelect>
       ) : (
         <div className="empty-state">No workout sessions yet. Start one from the Dashboard.</div>

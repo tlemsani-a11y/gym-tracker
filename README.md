@@ -129,6 +129,12 @@ src/
 
 Tokens live at the top of `src/app/globals.css`: a neutral dark surface stack (`--bg` / `--surface` / `--surface-2` / `--surface-3`), hairline borders (`--border` / `--border-strong`), a three-tier text scale, and a single indigo accent (`--accent`) plus muted success/danger/warning colors used sparingly for state (PRs, deletions, streaks). Layout is a persistent sidebar (`Sidebar.tsx`) on screens ≥900px and a bottom tab bar (`TabBar.tsx`) below that — both read from the same nav config in `nav-items.tsx`.
 
+## Performance
+
+Every page fetches all its data in a small, fixed number of bulk (joined) queries — see `getAllExercisesForProfile` / `getAllSetsForProfile` in `lib/queries.ts` — instead of one query per program/exercise/session, which is what actually matters when the database is a network call away (Turso), not a local file. Every route also has a `loading.tsx`, so navigating shows an instant skeleton via React Suspense while data streams in, rather than a frozen screen.
+
+`vercel.json` pins the serverless function to `cdg1` (Paris) instead of Vercel's US-East default, since round-trip time to wherever your Turso database lives matters more than almost anything else here. If requests still feel slow after deploying, check your Turso database's actual region (`turso db show gym-tracker`, or the **Connect** tab on [app.turso.tech](https://app.turso.tech)) — if it's not in Europe, moving the `regions` value in `vercel.json` to match it (or creating a new Turso database in a closer region) will help more than any code change. Some latency on Vercel's Hobby tier is unavoidable regardless — serverless functions "cold start" after sitting idle, and the first request after a gap is always slower.
+
 ## Notes
 
 - Locally, data lives at `data/gym.db` (a plain file — back it up however you like). In production it lives in Turso; `turso db shell gym-tracker` gives you a SQL prompt against it, and `turso db dump gym-tracker` exports a full snapshot. Either way, the in-app **Export backup** button (Profiles page) also gives you a portable JSON copy any time.
